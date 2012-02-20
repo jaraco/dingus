@@ -6,46 +6,55 @@
 import sys
 from functools import wraps
 
-def DingusTestCase(object_under_test, exclude=None):
+
+class TestCase(object):
+    def setup(self):
+        module_name = self.object_under_test.__module__
+        self._dingus_module = sys.modules[module_name]
+        self._dingus_replace_module_globals(self._dingus_module)
+
+    def teardown(self):
+        self._dingus_restore_module(self._dingus_module)
+
+    def _dingus_replace_module_globals(self, module):
+        old_module_dict = module.__dict__.copy()
+        module_keys = set(module.__dict__.iterkeys())
+
+        dunders = set(k for k in module_keys
+            if k.startswith('__') and k.endswith('__'))
+        replaced_keys = (module_keys - dunders - set(self.names_under_test))
+        for key in replaced_keys:
+            module.__dict__[key] = Dingus()
+        module.__dict__['__dingused_dict__'] = old_module_dict
+
+    def _dingus_restore_module(self, module):
+        old_module_dict = module.__dict__['__dingused_dict__']
+        module.__dict__.clear()
+        module.__dict__.update(old_module_dict)
+
+
+def DingusTestCase(object_under_test, exclude=None, base=TestCase):
+    """
+    Create a new DingusTestCase customized for the object_under_test
+    """
     if isinstance(exclude, basestring):
         raise ValueError("Strings not allowed for exclude. " +
                          "Use a list: exclude=['identifier']")
     exclude = [] if exclude is None else exclude
 
-    def get_names_under_test():
-        module = sys.modules[object_under_test.__module__]
-        for name, value in module.__dict__.iteritems():
-            if value is object_under_test or name in exclude:
-                yield name
+    module = sys.modules[object_under_test.__module__]
 
-    class TestCase(object):
-        def setup(self):
-            module_name = object_under_test.__module__
-            self._dingus_module = sys.modules[module_name]
-            self._dingus_replace_module_globals(self._dingus_module)
+    names_under_test = [
+        name for name, value in module.__dict__.iteritems()
+        if value is object_under_test or name in exclude
+    ]
+    class_name = '%s_DingusTestCase' % '_'.join(names_under_test)
 
-        def teardown(self):
-            self._dingus_restore_module(self._dingus_module)
-
-        def _dingus_replace_module_globals(self, module):
-            old_module_dict = module.__dict__.copy()
-            module_keys = set(module.__dict__.iterkeys())
-
-            dunders = set(k for k in module_keys
-                           if k.startswith('__') and k.endswith('__'))
-            replaced_keys = (module_keys - dunders - set(names_under_test))
-            for key in replaced_keys:
-                module.__dict__[key] = Dingus()
-            module.__dict__['__dingused_dict__'] = old_module_dict
-
-        def _dingus_restore_module(self, module):
-            old_module_dict = module.__dict__['__dingused_dict__']
-            module.__dict__.clear()
-            module.__dict__.update(old_module_dict)
-
-    names_under_test = list(get_names_under_test())
-    TestCase.__name__ = '%s_DingusTestCase' % '_'.join(names_under_test)
-    return TestCase
+    return type(class_name, (base,), dict(
+        object_under_test = object_under_test,
+        names_under_test = names_under_test,
+        exclude = exclude,
+    ))
 
 
 # These sentinels are used for argument defaults because the user might want
